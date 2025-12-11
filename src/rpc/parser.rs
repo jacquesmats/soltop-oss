@@ -1,5 +1,6 @@
 use regex::Regex;
 use once_cell::sync::Lazy;
+use std::time::{Duration, Instant};
 
 /// Regex to match compute unit consumption in logs
 /// Matches: "Program XXX consumed 12345 of 200000 compute units"
@@ -15,6 +16,14 @@ pub fn extract_cu(log: &str) -> Option<u64> {
             .as_str() 
             .parse()  
             .ok()                  // Option<u64>
+}
+
+// timed version
+pub fn extract_cu_timed(log: &str) -> (Option<u64>, Duration) {
+    let start = Instant::now();
+    let result = extract_cu(log);
+    let elapsed = start.elapsed();
+    (result, elapsed)
 }
 
 /// Extract program ID from transaction

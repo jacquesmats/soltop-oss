@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use crate::stats::program::SlotStats;
 
-use crate::rpc::{BlockData, extract_cu, extract_program_id};
+use crate::rpc::{BlockData, extract_cu, extract_program_id, extract_cu_timed};
 
 use super::ProgramStats;
 use std::cmp::Reverse;
@@ -23,6 +23,9 @@ pub struct NetworkState {
     
     /// Ring buffer capacity (e.g., 750 slots for 5 min)
     buffer_capacity: usize,
+
+    /// Performance stats
+    pub perf_stats: PerfStats,
 }
 
 impl NetworkState {
@@ -33,7 +36,8 @@ impl NetworkState {
             current_slot: 0, 
             start_time: Instant::now(), 
             window_duration, 
-            buffer_capacity 
+            buffer_capacity,
+            perf_stats: PerfStats::new(),
         }
     }
     
@@ -82,7 +86,9 @@ impl NetworkState {
     }
 
     // Process all transactions in a block
-    pub fn process_block(&mut self, slot: u64, block_data: &BlockData) {
+    pub fn process_block(&mut self, slot: u64, block_data: &BlockData, verbose: bool) {
+        let start = if verbose { Some(Instant::now()) } else { None };
+        
         // Update current slot
         self.update_slot(slot);
         
@@ -92,7 +98,7 @@ impl NetworkState {
         
         // Process each transaction and accumulate
         for tx_data in &block_data.transactions {
-            if let Some((program_id, cu_used, success)) = self.extract_tx_data(tx_data) {
+            if let Some((program_id, cu_used, success)) = self.extract_tx_data(tx_data, verbose) {
                 let acc = slot_data.entry(program_id).or_insert_with(SlotAccumulator::new);
                 acc.add_transaction(cu_used, success);
             }
@@ -109,10 +115,14 @@ impl NetworkState {
                 .or_insert_with(|| ProgramStats::new(program_id, self.buffer_capacity))
                 .record_slot(slot_stats);
         }
+
+        if let Some(start_time) = start {
+            self.perf_stats.process_block_time += start_time.elapsed();
+        }
     }
     
     /// Extract relevant data from a transaction
-    fn extract_tx_data(&self, tx_data: &crate::rpc::TransactionData) -> Option<(String, u64, bool)> {
+    fn extract_tx_data(&mut self, tx_data: &crate::rpc::TransactionData, verbose: bool) -> Option<(String, u64, bool)> {
         // Extract program ID
         let program_id = extract_program_id(&tx_data)?;
         
@@ -121,14 +131,23 @@ impl NetworkState {
             .as_ref()
             .map(|meta| meta.err.is_none())
             .unwrap_or(false);
-        
-        // Extract compute units from logs
+
+        // Extract compute units from logs, with verbose/perf_stats tracking if needed
         let total_cu: u64 = tx_data.meta
             .as_ref()
             .and_then(|meta| meta.log_messages.as_ref())
             .map(|logs| {
                 logs.iter()
-                    .filter_map(|log| extract_cu(log))
+                    .filter_map(|log| {
+                        if verbose {
+                            let (cu, elapsed) = crate::rpc::extract_cu_timed(log);
+                            self.perf_stats.extract_cu_time += elapsed;
+                            self.perf_stats.extract_cu_calls += 1;
+                            cu
+                        } else {
+                            extract_cu(log)
+                        }
+                    })
                     .sum()
             })
             .unwrap_or(0);
@@ -158,7 +177,9 @@ impl SlotAccumulator {
     fn add_transaction(&mut self, cu_used: u64, success: bool) {
         self.total_cu += cu_used;
         self.tx_count += 1;
-        self.cu_values.push(cu_used);
+        self.cu_values.push(cu_used);   // TO DO: Here we are storing all cu values for this program,
+                                        // just to calculate min and max. This can be optimzied. But
+                                        // can we do more with this values maybe? p99?
 
         if success {
             self.success_count += 1;
@@ -188,6 +209,30 @@ impl SlotAccumulator {
     }
 }
 
+/// Performance statistics (only used in verbose mode)
+#[derive(Debug, Default)]
+pub struct PerfStats {
+    pub process_block_time: Duration,
+    pub extract_cu_time: Duration,
+    pub extract_cu_calls: u64,
+}
+
+impl PerfStats {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
+    pub fn print_summary(&self, blocks_processed: usize) {
+        println!("\n📊 Performance Summary:");
+        println!("  Blocks processed: {}", blocks_processed);
+        println!("  Total process_block time: {:.2}ms", self.process_block_time.as_secs_f64() * 1000.0);
+        println!("  - Avg per block: {:.2}ms", self.process_block_time.as_secs_f64() * 1000.0 / blocks_processed as f64);
+        println!("  Total extract_cu time: {:.2}ms", self.extract_cu_time.as_secs_f64() * 1000.0);
+        println!("  - extract_cu calls: {}", self.extract_cu_calls);
+        println!("  - Avg per extract_cu call: {:.2}µs", 
+                 self.extract_cu_time.as_secs_f64() * 1_000_000.0 / self.extract_cu_calls as f64);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

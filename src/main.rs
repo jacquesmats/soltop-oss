@@ -2,11 +2,30 @@ use anyhow::Result;
 use soltop::rpc::RpcClient;
 use soltop::stats::NetworkState;
 use std::time::Duration;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(name = "soltop")]
+#[command(about = "Terminal UI for Solana network monitoring", long_about = None)]
+struct Args {
+    /// Enable verbose performance statistics
+    #[arg(short, long)]
+    verbose: bool,
+    
+    /// RPC endpoint URL
+    #[arg(long, default_value = "https://api.mainnet-beta.solana.com")]
+    rpc_url: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let rpc_url = "https://api.mainnet-beta.solana.com".to_string();
-    let client = RpcClient::new(rpc_url);
+    let args = Args::parse();
+    
+    let client = RpcClient::new(args.rpc_url.clone());
+    
+    if args.verbose {
+        println!("🔍 Verbose mode enabled - showing performance stats\n");
+    }
     
     // Create network state tracker
     let mut state = NetworkState::new(
@@ -27,7 +46,7 @@ async fn main() -> Result<()> {
         match client.get_block(block_slot).await? {
             Some(block_response) => {
                 if let Some(block_data) = block_response.result {
-                    state.process_block(block_slot, &block_data);
+                    state.process_block(block_slot, &block_data, args.verbose);
                     println!("✓ Processed block {} ({} txs)", 
                              block_slot, 
                              block_data.transactions.len());
@@ -36,6 +55,10 @@ async fn main() -> Result<()> {
             None => println!("✗ Block {} was skipped", block_slot),
         }
     }
+
+    if args.verbose {
+        state.perf_stats.print_summary(5);
+    } 
     
     // Display statistics
     println!("\n=== Program Statistics ===\n");
