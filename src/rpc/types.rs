@@ -32,11 +32,19 @@ pub struct Transaction {
     pub message: Message,
 }
 
-/// Transaction message (contains account keys)
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Instruction {
+    #[serde(rename = "programIdIndex")]
+    pub program_id_index: u8,
+    // Note: There are other fields (accounts, data) but we don't need them yet
+}
+
+// Update Message to include instructions
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Message {
     #[serde(rename = "accountKeys")]
     pub account_keys: Vec<String>,
+    pub instructions: Vec<Instruction>,
 }
 
 /// Block data response
