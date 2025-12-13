@@ -1,96 +1,75 @@
 use regex::Regex;
 use once_cell::sync::Lazy;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 /// Regex to match compute unit consumption in logs
 /// Matches: "Program XXX consumed 12345 of 200000 compute units"
 static CU_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"consumed (\d+) of \d+ compute units").unwrap()
+    Regex::new(r"Program (\S+) consumed (\d+) of \d+ compute units").unwrap()
 });
 
-/// Extract compute units from a log message
+/// Extract program ID and CU consumption from a log message
 /// Returns None if the log doesn't contain CU information
-pub fn extract_cu(log: &str) -> Option<u64> {
-    CU_REGEX.captures(log)?    // Option<Captures> - early return if None
-            .get(1)?               // Option<Match> - early return if None  
-            .as_str() 
-            .parse()  
-            .ok()                  // Option<u64>
+fn parse_program_cu(log: &str) -> Option<(String, u64)> {
+    let caps = CU_REGEX.captures(log)?;
+    let program_id = caps.get(1)?.as_str().to_string();
+    let cu = caps.get(2)?.as_str().parse().ok()?;
+    Some((program_id, cu))                // Option<u64>
+}
+
+/// Extract ALL programs and their TOTAL CU consumption from logs
+/// 
+/// If a program appears multiple times, CU values are summed.
+pub fn extract_program_cu(logs: &[String]) -> HashMap<String, u64> {
+    let mut programs = HashMap::new();
+    
+    for log in logs {
+        if let Some((program_id, cu)) = parse_program_cu(log) {
+            *programs.entry(program_id).or_insert(0) += cu;
+        }
+    }
+    
+    programs
 }
 
 // timed version
-pub fn extract_cu_timed(log: &str) -> (Option<u64>, Duration) {
+pub fn extract_program_cu_timed(logs: &[String]) -> (HashMap<String, u64>, Duration) {
     let start = Instant::now();
-    let result = extract_cu(log);
+    let result = extract_program_cu(logs);
     let elapsed = start.elapsed();
     (result, elapsed)
-}
-
-/// Extract program ID from transaction
-pub fn extract_program_id(tx_data: &crate::rpc::TransactionData) -> Option<String> {
-    let index = tx_data.transaction
-                .message
-                .instructions.first()?
-                .program_id_index;
-    
-    tx_data.transaction.message.account_keys.get(index as usize).cloned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
-    fn test_extract_cu() {
-        let log = "Program JUP4Fb2c consumed 42069 of 200000 compute units";
-        assert_eq!(extract_cu(log), Some(42069));
+    fn test_multi_program_extraction() {
+        let logs = vec![
+            "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 3158 of 200207 compute units".to_string(),
+            "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 7913 of 204938 compute units".to_string(),
+        ];
+
+        let programs = extract_program_cu(&logs);
         
-        let log2 = "Program log: Some other message";
-        assert_eq!(extract_cu(log2), None);
-    }
-    
-    #[test]
-    fn test_extract_program_id() {
-        use crate::rpc::types::{TransactionData, Transaction, Message, Instruction, TransactionMeta};
-        
-        // Create a mock transaction with the Vote program
-        let tx_data = TransactionData {
-            transaction: Transaction {
-                message: Message {
-                    account_keys: vec![
-                        "FeePayerWallet1111111111111111111111111111".to_string(),
-                        "VoteAccount11111111111111111111111111111111".to_string(),
-                        "Vote111111111111111111111111111111111111111".to_string(),
-                    ],
-                    instructions: vec![
-                        Instruction {
-                            program_id_index: 2,  // Points to the Vote program
-                        }
-                    ],
-                },
-            },
-            meta: None,
-        };
-        
-        let program_id = extract_program_id(&tx_data);
-        assert_eq!(program_id, Some("Vote111111111111111111111111111111111111111".to_string()));
+        assert_eq!(programs.len(), 2);
+        assert_eq!(programs.get("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"), Some(&3158));
+        assert_eq!(programs.get("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"), Some(&7913));
     }
 
     #[test]
-    fn test_extract_program_id_empty_instructions() {
-        use crate::rpc::types::{TransactionData, Transaction, Message, TransactionMeta};
+    fn test_sum_multiple_invocations() {
+        let logs = vec![
+            "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 7913 of 204938 compute units".to_string(),
+            "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 199 of 50825 compute units".to_string(),
+            "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 135734 of 179060 compute units".to_string(),
+        ];
+
+        let programs = extract_program_cu(&logs);
         
-        let tx_data = TransactionData {
-            transaction: Transaction {
-                message: Message {
-                    account_keys: vec!["SomeAccount111111111111111111111111111111".to_string()],
-                    instructions: vec![],  // Empty!
-                },
-            },
-            meta: None,
-        };
-        
-        let program_id = extract_program_id(&tx_data);
-        assert_eq!(program_id, None);
+        // Should sum all three: 7913 + 199 + 135734 = 143846
+        assert_eq!(programs.get("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"), Some(&143846));
     }
 }

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
 use crate::stats::program::SlotStats;
 
-use crate::rpc::{BlockData, extract_cu, extract_program_id, extract_cu_timed};
+use crate::rpc::{BlockData, extract_program_cu, extract_program_cu_timed};
 
 use super::ProgramStats;
 use std::cmp::Reverse;
@@ -98,9 +99,11 @@ impl NetworkState {
         
         // Process each transaction and accumulate
         for tx_data in &block_data.transactions {
-            if let Some((program_id, cu_used, success)) = self.extract_tx_data(tx_data, verbose) {
-                let acc = slot_data.entry(program_id).or_insert_with(SlotAccumulator::new);
-                acc.add_transaction(cu_used, success);
+            if let Some((programs, success)) = self.extract_tx_data(tx_data, verbose) {
+                for (program_id, cu_used) in programs{
+                    let acc = slot_data.entry(program_id).or_insert_with(SlotAccumulator::new);
+                    acc.add_transaction(cu_used, success);
+                }
             }
         }
         
@@ -122,9 +125,7 @@ impl NetworkState {
     }
     
     /// Extract relevant data from a transaction
-    fn extract_tx_data(&mut self, tx_data: &crate::rpc::TransactionData, verbose: bool) -> Option<(String, u64, bool)> {
-        // Extract program ID
-        let program_id = extract_program_id(&tx_data)?;
+    fn extract_tx_data(&mut self, tx_data: &crate::rpc::TransactionData, verbose: bool) -> Option<(HashMap<String, u64>, bool)> {
         
         // Check success
         let success = tx_data.meta
@@ -132,27 +133,31 @@ impl NetworkState {
             .map(|meta| meta.err.is_none())
             .unwrap_or(false);
 
-        // Extract compute units from logs, with verbose/perf_stats tracking if needed
-        let total_cu: u64 = tx_data.meta
-            .as_ref()
-            .and_then(|meta| meta.log_messages.as_ref())
-            .map(|logs| {
-                logs.iter()
-                    .filter_map(|log| {
-                        if verbose {
-                            let (cu, elapsed) = crate::rpc::extract_cu_timed(log);
-                            self.perf_stats.extract_cu_time += elapsed;
-                            self.perf_stats.extract_cu_calls += 1;
-                            cu
-                        } else {
-                            extract_cu(log)
-                        }
-                    })
-                    .sum()
-            })
-            .unwrap_or(0);
-        
-        Some((program_id, total_cu, success))
+        // Extract ALL programs at once (returns HashMap<String, u64>)
+        let programs: HashMap<String, u64> = match tx_data.meta.as_ref()
+                .and_then(|meta| meta.log_messages.as_ref()) 
+            {
+                Some(logs) => {
+                    if verbose {
+                        let (result, elapsed) = extract_program_cu_timed(logs);
+            
+                        self.perf_stats.extract_cu_time += elapsed;
+                        self.perf_stats.extract_cu_calls += 1;
+                        
+                        result
+                    } else {
+                        extract_program_cu(logs)
+                    }
+                }
+                None => HashMap::new(),
+            };
+
+        // If no programs found, skip this transaction
+        if programs.is_empty() {
+            return None;
+        }
+
+        Some((programs, success))
     }
 }
 
