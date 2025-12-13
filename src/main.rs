@@ -15,6 +15,10 @@ struct Args {
     /// RPC endpoint URL
     #[arg(long, default_value = "https://api.mainnet-beta.solana.com")]
     rpc_url: String,
+
+    /// Hide system programs (Vote, ComputeBudget, System)
+    #[arg(long)]
+    hide_system: bool,
 }
 
 #[tokio::main]
@@ -40,7 +44,7 @@ async fn main() -> Result<()> {
     println!("Processing recent blocks...");
     
     // Process 5 recent blocks
-    for i in 1..=5 {
+    for i in 1..=1 {
         let block_slot = slot - i;
         
         match client.get_block(block_slot).await? {
@@ -57,7 +61,7 @@ async fn main() -> Result<()> {
     }
 
     if args.verbose {
-        state.perf_stats.print_summary(5);
+        state.perf_stats.print_summary(1);
     } 
     
     // Display statistics
@@ -66,7 +70,7 @@ async fn main() -> Result<()> {
              "Program", "Txs", "Success%", "CU/s", "Avg CU", "Min CU", "Max CU");
     println!("{}", "─".repeat(115));
     
-    let stats = state.get_program_stats();
+    let stats = state.get_program_stats(args.hide_system);
     for program_stats in stats.iter().take(10) {  // Top 10
         println!("{:<45} {:>8} {:>9.1}% {:>12.0} {:>12.0} {:>12} {:>12}",
                  &program_stats.program_id[..program_stats.program_id.len().min(45)],

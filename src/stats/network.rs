@@ -5,6 +5,8 @@ use crate::stats::program::SlotStats;
 
 use crate::rpc::{BlockData, extract_program_cu, extract_program_cu_timed};
 
+use crate::stats::is_system_program;
+
 use super::ProgramStats;
 use std::cmp::Reverse;
 
@@ -67,11 +69,19 @@ impl NetworkState {
     }
     
     /// Get statistics for all programs, sorted by transaction count
-    pub fn get_program_stats(&self) -> Vec<&ProgramStats> {
-        let mut stats: Vec<_> = self.programs.values().collect();
-
+    pub fn get_program_stats(&self, hide_system: bool) -> Vec<&ProgramStats> {
+        let mut stats: Vec<_> = self.programs
+            .iter()
+            .filter(|(program_id, _stats)| {
+                // Include if: (not hiding) OR (hiding AND not a system program)
+                !hide_system || !is_system_program(program_id)
+            })
+            .map(|(_program_id, stats)| stats)  // Extract just the stats
+            .collect();
+        
+        // Sort by transaction count (descending)
         stats.sort_by_key(|s| Reverse(s.total_transactions()));
-
+        
         stats
     }
     
@@ -286,7 +296,7 @@ mod tests {
         assert_eq!(state.program_count(), 1);
         
         // Get stats
-        let stats = state.get_program_stats();
+        let stats = state.get_program_stats(false);
         assert_eq!(stats.len(), 1);
         
         // Verify Jupiter stats
