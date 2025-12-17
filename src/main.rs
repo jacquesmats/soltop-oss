@@ -1,8 +1,8 @@
 use anyhow::Result;
-use soltop::rpc::RpcClient;
-use soltop::stats::NetworkState;
 use std::time::Duration;
 use clap::Parser;
+use soltop::{NetworkMonitor, MonitorConfig};
+use tokio;
 
 #[derive(Parser, Debug)]
 #[command(name = "soltop")]
@@ -13,7 +13,11 @@ struct Args {
     verbose: bool,
     
     /// RPC endpoint URL
-    #[arg(long, default_value = "https://api.mainnet-beta.solana.com")]
+    #[arg(
+        long,
+        default_value = "https://api.mainnet-beta.solana.com",
+        help = "RPC endpoint URL"
+    )]
     rpc_url: String,
 
     /// Hide system programs (Vote, ComputeBudget, System)
@@ -23,66 +27,52 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse command-line arguments
     let args = Args::parse();
-    
-    let client = RpcClient::new(args.rpc_url.clone());
-    
-    if args.verbose {
-        println!("🔍 Verbose mode enabled - showing performance stats\n");
-    }
-    
-    // Create network state tracker
-    let mut state = NetworkState::new(
-        Duration::from_secs(300),  // 5 minute window
-        750  // ~5 min of slots
-    );
-    
-    println!("Fetching latest slot...");
-    let slot = client.get_latest_slot().await?;
-    println!("✓ Current slot: {}\n", slot);
-    
-    println!("Processing recent blocks...");
-    
-    // Process 5 recent blocks
-    for i in 1..=1 {
-        let block_slot = slot - i;
-        
-        match client.get_block(block_slot).await? {
-            Some(block_response) => {
-                if let Some(block_data) = block_response.result {
-                    state.process_block(block_slot, &block_data, args.verbose);
-                    println!("✓ Processed block {} ({} txs)", 
-                             block_slot, 
-                             block_data.transactions.len());
-                }
-            }
-            None => println!("✗ Block {} was skipped", block_slot),
-        }
-    }
 
-    if args.verbose {
-        state.perf_stats.print_summary(1);
-    } 
+    // Create configuration
+    let config = MonitorConfig {
+        rpc_url: args.rpc_url,
+        window_duration: Duration::from_secs(5 * 60),  // 5 minutes
+        buffer_capacity: 750,
+        poll_interval: Duration::from_millis(400),
+    };
     
-    // Display statistics
-    println!("\n=== Program Statistics ===\n");
-    println!("{:<45} {:>8} {:>10} {:>12} {:>12} {:>12} {:>12}", 
-             "Program", "Txs", "Success%", "CU/s", "Avg CU", "Min CU", "Max CU");
-    println!("{}", "─".repeat(115));
+    // Create monitor
+    let monitor = NetworkMonitor::new(config);
     
-    let stats = state.get_program_stats(args.hide_system);
-    for program_stats in stats.iter().take(10) {  // Top 10
-        println!("{:<45} {:>8} {:>9.1}% {:>12.0} {:>12.0} {:>12} {:>12}",
-                 &program_stats.program_id[..program_stats.program_id.len().min(45)],
-                 program_stats.total_transactions(),
-                 program_stats.success_rate(),
-                 program_stats.cu_per_second(),
-                 program_stats.avg_cu_per_transaction(),
-                 program_stats.min_cu(),
-                 program_stats.max_cu());
-    }
+    // Get shared state for printing stats
+    let state = monitor.get_state();
     
-    println!("\nTracking {} programs total", state.program_count());
+    // Spawn stats printer task
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            
+            // Read current stats
+            let state = state.read().await;
+            let stats = state.get_program_stats(true);  // Hide system programs
+            
+            // Print summary
+            println!("\n=== soltop - Slot {} ===", state.current_slot);
+            println!("Programs tracked: {}", stats.len());
+            
+            // Print top 5 programs
+            for (i, stat) in stats.iter().take(5).enumerate() {
+                println!(
+                    "{}. {} - {:.0} tx/s, {:.0} CU/s, {:.1}% success",
+                    i + 1,
+                    &stat.program_id[..8],  // First 8 chars
+                    stat.transactions_per_second(),
+                    stat.cu_per_second(),
+                    stat.success_rate(),
+                );
+            }
+        }
+    });
+    
+    // Start the pipeline (runs forever)
+    monitor.start().await?;
     
     Ok(())
 }
