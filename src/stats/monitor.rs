@@ -63,7 +63,6 @@ impl NetworkMonitor {
         tx: mpsc::Sender<u64>,
     ) -> Result<()> {
         let mut current_slot = rpc_client.get_latest_slot().await?;
-        println!("Starting from slot: {}", current_slot);
         
         loop {
             // Check where we are

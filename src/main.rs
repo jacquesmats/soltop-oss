@@ -1,8 +1,24 @@
 use anyhow::Result;
+use crossterm::{
+    event::{self, Event, KeyCode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    Terminal,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, Row, Table, Cell, Paragraph},
+    Frame,
+};
 use std::time::Duration;
+use std::io;
 use clap::Parser;
-use soltop::{NetworkMonitor, MonitorConfig};
 use tokio;
+
+use soltop::{NetworkMonitor, MonitorConfig};
+use soltop::ui::App;
 
 #[derive(Parser, Debug)]
 #[command(name = "soltop")]
@@ -39,40 +55,154 @@ async fn main() -> Result<()> {
     };
     
     // Create monitor
-    let monitor = NetworkMonitor::new(config);
+    let mut monitor = NetworkMonitor::new(config);
     
-    // Get shared state for printing stats
-    let state = monitor.get_state();
+    // Get shared state reference for UI
+    let network_state = monitor.get_state(); // Clone the Arc
     
     // Spawn stats printer task
     tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            
-            // Read current stats
-            let state = state.read().await;
-            let stats = state.get_program_stats(true);  // Hide system programs
-            
-            // Print summary
-            println!("\n=== soltop - Slot {} ===", state.current_slot);
-            println!("Programs tracked: {}", stats.len());
-            
-            // Print top 5 programs
-            for (i, stat) in stats.iter().take(5).enumerate() {
-                println!(
-                    "{}. {} - {:.0} tx/s, {:.0} CU/s, {:.1}% success",
-                    i + 1,
-                    &stat.program_id[..8],  // First 8 chars
-                    stat.transactions_per_second(),
-                    stat.cu_per_second(),
-                    stat.success_rate(),
-                );
-            }
+        if let Err(e) = monitor.start().await {
+            eprintln!("Monitor error: {}", e);
         }
     });
+
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    stdout.execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Create app with the shared state
+    let mut app = App::new(network_state);
+
+    // Run event loop
+    let result = run_app(&mut terminal, &mut app).await;
+
+    // Cleanup: restore terminal
+    disable_raw_mode()?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    if let Err(e) = result {
+        eprintln!("Application error: {}", e);
+    }
+
+    Ok(())
+}
+
+async fn run_app<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+) -> Result<()> {
+    // Tick rate: how often we update the UI
+    let tick_rate = Duration::from_millis(500);
+    let mut last_tick = tokio::time::Instant::now();
     
-    // Start the pipeline (runs forever)
-    monitor.start().await?;
+    loop {
+        app.update_stats().await;
+
+        // 1. Draw UI
+        terminal.draw(|frame| {
+            render_ui(frame, app);
+        })?;
+        
+        // 2. Handle events with timeout
+        let timeout = tick_rate
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or_else(|| Duration::from_secs(0));
+        
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                // Handle keyboard input
+                app.handle_key(key.code);
+            }
+        }
+        
+        // 3. Tick if enough time has elapsed
+        if last_tick.elapsed() >= tick_rate {
+            // This is where we'd update app state
+            // (Currently no-op since data updates happen in background)
+            last_tick = tokio::time::Instant::now();
+        }
+        
+        // 4. Check exit condition
+        if !app.running {
+            break;
+        }
+    }
     
     Ok(())
+}
+
+fn render_ui(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    
+    // Create main layout: header + table
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),      // Header
+            Constraint::Min(0),         // Table (takes remaining space)
+        ])
+        .split(area);
+    
+    // Render header
+    render_header(frame, chunks[0]);
+    
+    // Render table
+    render_table(frame, app, chunks[1]);
+}
+
+fn render_header(frame: &mut Frame, area: ratatui::layout::Rect) {
+    let header_block = Block::default()
+        .title("soltop - Solana Network Monitor")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Cyan));
+    
+    let inner = header_block.inner(area);
+    frame.render_widget(header_block, area);
+    
+    // TODO: Add RPC URL, slot, uptime info here (next tutorial)
+    let text = Paragraph::new("Press 'q' to quit")
+        .style(Style::default().fg(Color::White));
+    frame.render_widget(text, inner);
+}
+
+fn render_table(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let header = Row::new(vec![
+        Cell::from("Program ID"),
+        Cell::from("Txs/s"),
+        Cell::from("Total"),
+        Cell::from("Success%"),
+    ])
+    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    
+    // TODO: Convert cached stats to table rows
+    let rows: Vec<Row> = app
+        .get_cached_stats()
+        .iter()
+        .map(|stat| {
+            Row::new(vec![
+                // TODO: Truncate program ID to first 8 chars
+                Cell::from(format!("{}...", &stat.program_id[..8])),
+                // TODO: Format numbers nicely
+                Cell::from(format!("{:.1}", stat.tx_per_sec)),
+                Cell::from(format!("{}", stat.total_txs)),
+                Cell::from(format!("{:.1}%", stat.success_rate)),
+            ])
+        })
+        .collect();
+    
+    let table = Table::new(rows, vec![
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(20),
+        Constraint::Percentage(20),
+    ])
+    .header(header)
+    .block(Block::default().borders(Borders::ALL).title("Program Statistics"));
+    
+    frame.render_widget(table, area);
 }

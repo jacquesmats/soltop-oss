@@ -1,5 +1,6 @@
 pub mod rpc;
 pub mod stats;
+pub mod ui;
 
 
 // Re-export for convenience (optional but nice)

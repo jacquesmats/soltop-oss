@@ -13,7 +13,7 @@ use std::cmp::Reverse;
 /// Network-wide state containing all program statistics
 pub struct NetworkState {
     /// Map of program_id -> statistics
-    programs: HashMap<String, ProgramStats>,
+    pub programs: HashMap<String, ProgramStats>,
     
     /// Current slot being processed
     pub current_slot: u64,
