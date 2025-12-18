@@ -49,6 +49,9 @@ pub struct App {
     
     /// Current view mode (toggle with 'w')
     view_mode: ViewMode,
+    
+    /// Loading state - true until first data arrives
+    loading: bool,
 }
 
 impl App {
@@ -74,6 +77,7 @@ impl App {
             truncate_ids: false,
             hide_system_programs: false,
             view_mode: ViewMode::Live,
+            loading: true,
         }
     }
 
@@ -82,6 +86,11 @@ impl App {
         let (program_stats, network_stats) = self.get_stats().await;
         self.cached_stats = program_stats;
         self.cached_network_stats = network_stats;
+        
+        // Exit loading state once we have data
+        if self.cached_network_stats.current_slot > 0 {
+            self.loading = false;
+        }
     }
     
     /// Get cached stats for rendering
@@ -135,11 +144,17 @@ impl App {
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
 
+        // Show loading screen if no data yet
+        if self.loading {
+            self.render_loading_screen(frame, area);
+            return;
+        }
+
         // Create main layout: header + network overview + table + footer
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(13),     // Header (expanded for logo)
+                Constraint::Length(5),      // Header (normal size)
                 Constraint::Length(3),      // Network Overview
                 Constraint::Min(10),        // Table (takes remaining space)
                 Constraint::Length(1),      // Footer
@@ -151,6 +166,52 @@ impl App {
         self.render_network_overview(frame, chunks[1]);
         self.render_table(frame, chunks[2]);
         self.render_footer(frame, chunks[3]);
+    }
+
+    /// Render the loading screen with logo
+    fn render_loading_screen(&self, frame: &mut Frame, area: Rect) {
+        // Create centered layout
+        let vertical_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(30),  // Top spacer
+                Constraint::Length(15),      // Logo + text
+                Constraint::Percentage(30),  // Bottom spacer
+            ])
+            .split(area);
+
+        let horizontal_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25),  // Left spacer
+                Constraint::Percentage(50),  // Logo area
+                Constraint::Percentage(25),  // Right spacer
+            ])
+            .split(vertical_chunks[1]);
+
+        let content_area = horizontal_chunks[1];
+
+        // ASCII logo
+        let logo = vec![
+            "                  ████   █████                      ",
+            "                 ░░███  ░░███                       ",
+            "  █████   ██████  ░███  ███████    ██████  ████████ ",
+            " ███░░   ███░░███ ░███ ░░░███░    ███░░███░░███░░███",
+            "░░█████ ░███ ░███ ░███   ░███    ░███ ░███ ░███ ░███",
+            " ░░░░███░███ ░███ ░███   ░███ ███░███ ░███ ░███ ░███",
+            " ██████ ░░██████  █████  ░░█████ ░░██████  ░███████ ",
+            "░░░░░░   ░░░░░░  ░░░░░    ░░░░░   ░░░░░░   ░███░░░  ",
+            "                                           ░███     ",
+            "                                           █████    ",
+            "                                          ░░░░░     ",
+            "",
+            "              Loading Solana network data...",
+        ];
+        
+        let logo_text = Paragraph::new(logo.join("\n"))
+            .style(self.theme.normal_style())  // White instead of green
+            .alignment(Alignment::Center);
+        frame.render_widget(logo_text, content_area);
     }
 
     /// Render the header section
@@ -167,13 +228,13 @@ impl App {
         let inner = header_block.inner(area);
         frame.render_widget(header_block, area);
 
-        // Split inner area into 3 lines
+        // Split inner area into 3 lines (no logo in header anymore)
         let info_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),  // Line 1: Slot
                 Constraint::Length(1),  // Line 2: Stats with mode indicators
-                Constraint::Length(1),  // Line 3: Help text
+                Constraint::Length(1),  // Line 3: Spacer
             ])
             .split(inner);
 
