@@ -28,6 +28,8 @@ pub struct App {
     pub selected_row: usize,
 
     cached_stats: Vec<ProgramStatsDisplay>,
+    
+    cached_network_stats: NetworkStatsDisplay,
 
     /// Theme configuration
     theme: Theme,
@@ -41,13 +43,26 @@ impl App {
             running: true,
             selected_row: 0,
             cached_stats: vec![],
+            cached_network_stats: NetworkStatsDisplay {
+                current_slot: 0,
+                latest_network_slot: 0,
+                uptime: Duration::from_secs(0),
+                window_duration: Duration::from_secs(0),
+                program_count: 0,
+                total_tps: 0.0,
+                total_txs: 0,
+                avg_success_rate: 0.0,
+                total_cu_per_sec: 0.0,
+            },
             theme: Theme::flatline(),
         }
     }
 
     /// Update cached stats from network state
     async fn update_stats(&mut self) {
-        self.cached_stats = self.get_stats().await;
+        let (program_stats, network_stats) = self.get_stats().await;
+        self.cached_stats = program_stats;
+        self.cached_network_stats = network_stats;
     }
     
     /// Get cached stats for rendering
@@ -101,11 +116,12 @@ impl App {
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
 
-        // Create main layout: header + table + footer
+        // Create main layout: header + network overview + table + footer
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),      // Header
+                Constraint::Length(5),      // Header (expanded)
+                Constraint::Length(3),      // Network Overview
                 Constraint::Min(10),        // Table (takes remaining space)
                 Constraint::Length(1),      // Footer
             ])
@@ -113,12 +129,15 @@ impl App {
 
         // Render sections
         self.render_header(frame, chunks[0]);
-        self.render_table(frame, chunks[1]);
-        self.render_footer(frame, chunks[2]);
+        self.render_network_overview(frame, chunks[1]);
+        self.render_table(frame, chunks[2]);
+        self.render_footer(frame, chunks[3]);
     }
 
     /// Render the header section
     fn render_header(&self, frame: &mut Frame, area: Rect) {
+        let stats = &self.cached_network_stats;
+        
         // Create header with neon green border
         let header_block = Block::default()
             .title(" soltop - Solana Network Monitor ")
@@ -129,25 +148,93 @@ impl App {
         let inner = header_block.inner(area);
         frame.render_widget(header_block, area);
 
-        // Split inner area for multiple info lines
+        // Split inner area into 3 lines
         let info_chunks = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
+                Constraint::Length(1),  // Line 1: Slot
+                Constraint::Length(1),  // Line 2: Stats
+                Constraint::Length(1),  // Line 3: Help text
             ])
             .split(inner);
 
-        // Left side: Slot info (TODO: Get from network state when available)
-        let rpc_text = Paragraph::new("Monitoring...")
-            .style(self.theme.normal_style());
-        frame.render_widget(rpc_text, info_chunks[0]);
+        // Line 1: Current slot with network lag
+        let lag = if stats.latest_network_slot > stats.current_slot {
+            stats.latest_network_slot - stats.current_slot
+        } else {
+            0
+        };
+        
+        let slot_text = Paragraph::new(format!(
+            "Slot: {} │ Network: {} ({} behind)",
+            format_large_number(stats.current_slot),
+            format_large_number(stats.latest_network_slot),
+            lag
+        ))
+        .style(self.theme.normal_style());
+        frame.render_widget(slot_text, info_chunks[0]);
 
-        // Right side: Quit hint
+        // Line 2: Uptime, Window, Programs
+        let stats_text = Paragraph::new(format!(
+            "Uptime: {} │ Window: {} │ Programs: {}",
+            format_duration(stats.uptime),
+            format_duration(stats.window_duration),
+            stats.program_count
+        ))
+        .style(self.theme.muted_style());
+        frame.render_widget(stats_text, info_chunks[1]);
+
+        // Line 3: Help hint
         let hint_text = Paragraph::new("Press 'q' to quit")
             .style(self.theme.muted_style())
             .alignment(Alignment::Right);
-        frame.render_widget(hint_text, info_chunks[1]);
+        frame.render_widget(hint_text, info_chunks[2]);
+    }
+
+    /// Render the network overview panel
+    fn render_network_overview(&self, frame: &mut Frame, area: Rect) {
+        let stats = &self.cached_network_stats;
+        
+        let overview_block = Block::default()
+            .title(" Network Overview ")
+            .borders(Borders::ALL)
+            .border_style(self.theme.border_style())
+            .title_style(self.theme.header_style());
+
+        let inner = overview_block.inner(area);
+        frame.render_widget(overview_block, area);
+
+        // Create spans with color-coded metrics
+        let spans = vec![
+            Span::styled("Total TPS: ", self.theme.muted_style()),
+            Span::styled(
+                format!("{:.1}", stats.total_tps),
+                Style::default().fg(self.theme.tps_color(stats.total_tps))
+            ),
+            Span::raw("  │  "),
+            Span::styled("Total Txs: ", self.theme.muted_style()),
+            Span::styled(
+                format_large_number(stats.total_txs),
+                self.theme.normal_style()
+            ),
+            Span::raw("  │  "),
+            Span::styled("Avg Success: ", self.theme.muted_style()),
+            Span::styled(
+                format!("{:.1}%", stats.avg_success_rate),
+                Style::default().fg(self.theme.success_rate_color(stats.avg_success_rate))
+            ),
+            Span::raw("  │  "),
+            Span::styled("Total CU/s: ", self.theme.muted_style()),
+            Span::styled(
+                format_cu(stats.total_cu_per_sec),
+                Style::default().fg(self.theme.cu_per_sec_color(stats.total_cu_per_sec))
+            ),
+        ];
+
+        let overview_text = Paragraph::new(Line::from(spans))
+            .alignment(Alignment::Center);
+        
+        frame.render_widget(overview_text, inner);
     }
 
     /// Render the statistics table
@@ -156,6 +243,8 @@ impl App {
         let header = Row::new(vec![
             Cell::from("Program ID"),
             Cell::from("Txs/s"),
+            Cell::from("CU/s"),
+            Cell::from("Avg CU"),
             Cell::from("Total"),
             Cell::from("Success%"),
         ])
@@ -170,6 +259,8 @@ impl App {
                 // Color code based on metrics
                 let tps_color = self.theme.tps_color(stat.tx_per_sec);
                 let success_color = self.theme.success_rate_color(stat.success_rate);
+                let cu_per_sec_color = self.theme.cu_per_sec_color(stat.cu_per_sec);
+                let avg_cu_color = self.theme.avg_cu_color(stat.avg_cu);
 
                 Row::new(vec![
                     // Program ID (truncated, muted color)
@@ -179,6 +270,14 @@ impl App {
                     // TPS (color coded: green=low, amber=medium, red=high)
                     Cell::from(format!("{:.1}", stat.tx_per_sec))
                         .style(Style::default().fg(tps_color)),
+
+                    // CU/s (color coded based on compute intensity)
+                    Cell::from(format_cu(stat.cu_per_sec))
+                        .style(Style::default().fg(cu_per_sec_color)),
+
+                    // Avg CU (color coded based on efficiency)
+                    Cell::from(format_cu(stat.avg_cu))
+                        .style(Style::default().fg(avg_cu_color)),
 
                     // Total (normal white)
                     Cell::from(format!("{}", stat.total_txs))
@@ -191,12 +290,15 @@ impl App {
             })
             .collect();
 
-        // Table with border matching theme
+        // Table with border matching theme - adjusted column widths for 6 columns
         let table = Table::new(rows, vec![
-            Constraint::Percentage(40),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
+            Constraint::Percentage(25),  // Program ID
+            Constraint::Percentage(12),  // Txs/s
+            Constraint::Percentage(13),  // CU/s
+            Constraint::Percentage(13),  // Avg CU
+            Constraint::Percentage(12),  // Total
+            Constraint::Percentage(13),  // Success%
+            Constraint::Percentage(12),  // Padding to reach 100%
         ])
         .header(header)
         .block(
@@ -255,33 +357,140 @@ impl App {
     }
 
     /// Get current network statistics
-    async fn get_stats(&self) -> Vec<ProgramStatsDisplay> {
+    async fn get_stats(&self) -> (Vec<ProgramStatsDisplay>, NetworkStatsDisplay) {
         let state = self.network_state.read().await;
 
         let mut display = Vec::new();
+        
+        // Aggregate network-wide statistics
+        let mut total_tps = 0.0;
+        let mut total_txs = 0u64;
+        let mut total_success_txs = 0u64;
+        let mut total_cu_per_sec = 0.0;
 
         for (program_id, stats) in state.programs.iter() {
+            let tx_per_sec = stats.transactions_per_second();
+            let total_program_txs = stats.total_transactions();
+            let success_rate = stats.success_rate();
+            let cu_per_sec = stats.cu_per_second();
+            let avg_cu = stats.avg_cu_per_transaction();
+            
+            // Accumulate network totals
+            total_tps += tx_per_sec;
+            total_txs += total_program_txs as u64;
+            total_success_txs += ((success_rate / 100.0) * total_program_txs as f64) as u64;
+            total_cu_per_sec += cu_per_sec;
+            
             display.push(
                 ProgramStatsDisplay {
                     program_id: program_id.clone(),
-                    tx_per_sec: stats.transactions_per_second(),
-                    total_txs: stats.total_transactions(),
-                    success_rate: stats.success_rate(),
+                    tx_per_sec,
+                    total_txs: total_program_txs,
+                    success_rate,
+                    cu_per_sec,
+                    avg_cu,
+                    min_cu: stats.min_cu(),
+                    max_cu: stats.max_cu(),
             });
         }
         
         // Sort by total_txs descending
         display.sort_by_key(|s| Reverse(s.total_txs));
         
-        display
+        // Calculate average success rate (weighted)
+        let avg_success_rate = if total_txs > 0 {
+            (total_success_txs as f64 / total_txs as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        let network_stats = NetworkStatsDisplay {
+            current_slot: state.current_slot,
+            latest_network_slot: state.latest_network_slot,
+            uptime: state.uptime(),
+            window_duration: state.actual_window(),
+            program_count: state.program_count(),
+            total_tps,
+            total_txs,
+            avg_success_rate,
+            total_cu_per_sec,
+        };
+        
+        (display, network_stats)
     }
 }
 
-/// Simplified struct for displaying program stats in UI
-/// (We'll expand this as we build the table)
+/// Struct for displaying program stats in UI
 pub struct ProgramStatsDisplay {
     pub program_id: String,
     pub tx_per_sec: f64,
     pub total_txs: u32,
     pub success_rate: f64,
+    pub cu_per_sec: f64,
+    pub avg_cu: f64,
+    pub min_cu: u64,
+    pub max_cu: u64,
+}
+
+/// Struct for displaying network-wide aggregate statistics
+pub struct NetworkStatsDisplay {
+    pub current_slot: u64,
+    pub latest_network_slot: u64,
+    pub uptime: Duration,
+    pub window_duration: Duration,
+    pub program_count: usize,
+    pub total_tps: f64,
+    pub total_txs: u64,
+    pub avg_success_rate: f64,
+    pub total_cu_per_sec: f64,
+}
+
+// ============================================================================
+// Number Formatting Helpers
+// ============================================================================
+
+/// Format large numbers with comma separators (e.g., "1,234,567")
+fn format_large_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(*c);
+    }
+    
+    result
+}
+
+/// Format large numbers with K/M/B suffixes (e.g., "2.3M", "450.2K")
+fn format_cu(n: f64) -> String {
+    if n >= 1_000_000_000.0 {
+        format!("{:.1}B", n / 1_000_000_000.0)
+    } else if n >= 1_000_000.0 {
+        format!("{:.1}M", n / 1_000_000.0)
+    } else if n >= 1_000.0 {
+        format!("{:.1}K", n / 1_000.0)
+    } else {
+        format!("{:.0}", n)
+    }
+}
+
+/// Format duration in human-readable form (e.g., "2m 34s", "1h 23m")
+fn format_duration(d: Duration) -> String {
+    let total_secs = d.as_secs();
+    
+    if total_secs >= 3600 {
+        let hours = total_secs / 3600;
+        let minutes = (total_secs % 3600) / 60;
+        format!("{}h {}m", hours, minutes)
+    } else if total_secs >= 60 {
+        let minutes = total_secs / 60;
+        let seconds = total_secs % 60;
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", total_secs)
+    }
 }

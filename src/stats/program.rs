@@ -123,16 +123,23 @@ impl ProgramStats {
 
     // Calculate time passed between oldest and newest timestamps
     fn get_time_span(&self) -> f64 {
-        let mut iter = self.slot_timeline.iter();
-        let first = iter.next();
-        let last = iter.last();
-        
-        // Calculate duration
-        if let (Some(first_slot), Some(last_slot)) = (first, last) {
-            let duration = last_slot.timestamp.duration_since(first_slot.timestamp);
-            duration.as_secs_f64()
-        } else {
-            0.0
+        if self.slot_timeline.is_empty() {
+            return 1.0;  // Default to 1 second to avoid division by zero
         }
+        
+        if self.slot_timeline.len() == 1 {
+            return 1.0;  // Single slot, use 1 second minimum
+        }
+        
+        // Get first and last elements without consuming iterator
+        let slots: Vec<_> = self.slot_timeline.iter().collect();
+        let first_slot = slots.first().unwrap();
+        let last_slot = slots.last().unwrap();
+        
+        let duration = last_slot.timestamp.duration_since(first_slot.timestamp);
+        let time_span = duration.as_secs_f64();
+        
+        // Use minimum of 1 second to avoid infinity/huge numbers at startup
+        time_span.max(1.0)
     }
 }

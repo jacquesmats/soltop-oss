@@ -18,6 +18,9 @@ pub struct NetworkState {
     /// Current slot being processed
     pub current_slot: u64,
     
+    /// Latest network slot (for lag calculation)
+    pub latest_network_slot: u64,
+    
     /// When we started monitoring
     start_time: Instant,
     
@@ -36,7 +39,8 @@ impl NetworkState {
     pub fn new(window_duration: Duration, buffer_capacity: usize) -> Self {
         Self { 
             programs: HashMap::new(), 
-            current_slot: 0, 
+            current_slot: 0,
+            latest_network_slot: 0,
             start_time: Instant::now(), 
             window_duration, 
             buffer_capacity,
@@ -68,6 +72,11 @@ impl NetworkState {
         self.current_slot = slot;
     }
     
+    /// Update the latest network slot (for lag tracking)
+    pub fn update_latest_network_slot(&mut self, slot: u64) {
+        self.latest_network_slot = slot;
+    }
+    
     /// Get statistics for all programs, sorted by transaction count
     pub fn get_program_stats(&self, hide_system: bool) -> Vec<&ProgramStats> {
         let mut stats: Vec<_> = self.programs
@@ -94,6 +103,11 @@ impl NetworkState {
     /// Get number of programs being tracked
     pub fn program_count(&self) -> usize {
         self.programs.len()
+    }
+    
+    /// Get the uptime since monitoring started
+    pub fn uptime(&self) -> Duration {
+        self.start_time.elapsed()
     }
 
     // Process all transactions in a block

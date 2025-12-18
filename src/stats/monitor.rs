@@ -61,12 +61,19 @@ impl NetworkMonitor {
         rpc_client: RpcClient,
         poll_interval: Duration,
         tx: mpsc::Sender<u64>,
+        state: Arc<RwLock<NetworkState>>,
     ) -> Result<()> {
         let mut current_slot = rpc_client.get_latest_slot().await?;
         
         loop {
             // Check where we are
             let latest_slot = rpc_client.get_latest_slot().await?;
+            
+            // Update the latest network slot in state for UI display
+            {
+                let mut state = state.write().await;
+                state.update_latest_network_slot(latest_slot);
+            }
             
             if current_slot <= latest_slot {
                 // Send slot immediately
@@ -117,24 +124,24 @@ impl NetworkMonitor {
         let (tx, rx) = mpsc::channel::<u64>(100);
         
         // Clone data for consumer
-        let state = Arc::clone(&self.state);
+        let consumer_state = Arc::clone(&self.state);
         let rpc_client = RpcClient::new(self.config.rpc_url.clone());
         
-        // Clone data for producer (NEW!)
+        // Clone data for producer
         let producer_client = RpcClient::new(self.config.rpc_url.clone());
+        let producer_state = Arc::clone(&self.state);
         let poll_interval = self.config.poll_interval;
         
         // Spawn producer
         let producer = tokio::spawn(async move {
-            // Use cloned data, not self
-            if let Err(e) = Self::produce_slots(producer_client, poll_interval, tx).await {
+            if let Err(e) = Self::produce_slots(producer_client, poll_interval, tx, producer_state).await {
                 eprintln!("Producer error: {}", e);
             }
         });
         
         // Spawn consumer
         let consumer = tokio::spawn(async move {
-            if let Err(e) = Self::consume_slots(state, rpc_client, rx).await {
+            if let Err(e) = Self::consume_slots(consumer_state, rpc_client, rx).await {
                 eprintln!("Consumer error: {}", e);
             }
         });

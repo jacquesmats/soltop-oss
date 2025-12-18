@@ -85,4 +85,26 @@ impl Theme {
             self.success  // Low = normal
         }
     }
+
+    // Get color based on CU/s (compute units per second)
+    pub fn cu_per_sec_color(&self, cu_per_sec: f64) -> Color {
+        if cu_per_sec >= 10_000_000.0 {  // 10M+ CU/s
+            self.error  // Very high compute usage
+        } else if cu_per_sec >= 1_000_000.0 {  // 1M+ CU/s
+            self.amber  // Moderate compute usage
+        } else {
+            self.success  // Low compute usage
+        }
+    }
+
+    // Get color based on average CU per transaction
+    pub fn avg_cu_color(&self, avg_cu: f64) -> Color {
+        if avg_cu >= 200_000.0 {  // 200K+ CU per tx
+            self.error  // Very compute-intensive
+        } else if avg_cu >= 50_000.0 {  // 50K+ CU per tx
+            self.amber  // Moderate
+        } else {
+            self.success  // Low/efficient
+        }
+    }
 }
