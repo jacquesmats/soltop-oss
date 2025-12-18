@@ -16,7 +16,7 @@ use soltop::ui::App;
 
 #[derive(Parser, Debug)]
 #[command(name = "soltop")]
-#[command(about = "Terminal UI for Solana network monitoring", long_about = None)]
+#[command(about = "Terminal UI for Solana programs monitoring", long_about = None)]
 struct Args {
     /// Enable verbose performance statistics
     #[arg(short, long)]

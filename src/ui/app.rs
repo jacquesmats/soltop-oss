@@ -13,8 +13,15 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Row, Table, Cell, Paragraph},
 };
-use crate::stats::NetworkState;
+use crate::stats::{NetworkState, is_system_program};
 use super::Theme;
+
+/// View mode for displaying statistics
+#[derive(Clone, Copy, PartialEq)]
+enum ViewMode {
+    Live,       // Current behavior - shows recent activity
+    Window,     // Shows aggregate stats for entire window
+}
 
 /// Main TUI application
 pub struct App {
@@ -33,6 +40,15 @@ pub struct App {
 
     /// Theme configuration
     theme: Theme,
+    
+    /// Whether to truncate program IDs (toggle with 't')
+    truncate_ids: bool,
+    
+    /// Whether to hide system programs (toggle with 'u')
+    hide_system_programs: bool,
+    
+    /// Current view mode (toggle with 'w')
+    view_mode: ViewMode,
 }
 
 impl App {
@@ -55,6 +71,9 @@ impl App {
                 total_cu_per_sec: 0.0,
             },
             theme: Theme::flatline(),
+            truncate_ids: false,
+            hide_system_programs: false,
+            view_mode: ViewMode::Live,
         }
     }
 
@@ -120,7 +139,7 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),      // Header (expanded)
+                Constraint::Length(13),     // Header (expanded for logo)
                 Constraint::Length(3),      // Network Overview
                 Constraint::Min(10),        // Table (takes remaining space)
                 Constraint::Length(1),      // Footer
@@ -140,7 +159,7 @@ impl App {
         
         // Create header with neon green border
         let header_block = Block::default()
-            .title(" soltop - Solana Network Monitor ")
+            .title(" soltop - Solana Table of Programs ")
             .borders(Borders::ALL)
             .border_style(self.theme.border_style())
             .title_style(self.theme.header_style());
@@ -153,7 +172,7 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),  // Line 1: Slot
-                Constraint::Length(1),  // Line 2: Stats
+                Constraint::Length(1),  // Line 2: Stats with mode indicators
                 Constraint::Length(1),  // Line 3: Help text
             ])
             .split(inner);
@@ -174,21 +193,32 @@ impl App {
         .style(self.theme.normal_style());
         frame.render_widget(slot_text, info_chunks[0]);
 
-        // Line 2: Uptime, Window, Programs
-        let stats_text = Paragraph::new(format!(
-            "Uptime: {} │ Window: {} │ Programs: {}",
-            format_duration(stats.uptime),
-            format_duration(stats.window_duration),
-            stats.program_count
-        ))
-        .style(self.theme.muted_style());
+        // Line 2: Uptime, Window, Programs with mode indicators
+        let mut status_parts = vec![
+            format!("Uptime: {}", format_duration(stats.uptime)),
+            format!("Window: {}", format_duration(stats.window_duration)),
+            format!("Programs: {}", stats.program_count),
+        ];
+        
+        // Add mode indicators
+        let mut indicators = Vec::new();
+        if self.truncate_ids {
+            indicators.push("[TRUNCATED]");
+        }
+        if self.hide_system_programs {
+            indicators.push("[FILTERED]");
+        }
+        if self.view_mode == ViewMode::Window {
+            indicators.push("[WINDOW VIEW]");
+        }
+        
+        if !indicators.is_empty() {
+            status_parts.push(indicators.join(" "));
+        }
+        
+        let stats_text = Paragraph::new(status_parts.join(" │ "))
+            .style(self.theme.muted_style());
         frame.render_widget(stats_text, info_chunks[1]);
-
-        // Line 3: Help hint
-        let hint_text = Paragraph::new("Press 'q' to quit")
-            .style(self.theme.muted_style())
-            .alignment(Alignment::Right);
-        frame.render_widget(hint_text, info_chunks[2]);
     }
 
     /// Render the network overview panel
@@ -262,9 +292,16 @@ impl App {
                 let cu_per_sec_color = self.theme.cu_per_sec_color(stat.cu_per_sec);
                 let avg_cu_color = self.theme.avg_cu_color(stat.avg_cu);
 
+                // Handle ID display based on truncation setting
+                let program_display = if self.truncate_ids {
+                    format!("{}...", &stat.program_id[..8.min(stat.program_id.len())])
+                } else {
+                    stat.program_id.clone()
+                };
+
                 Row::new(vec![
-                    // Program ID (truncated, muted color)
-                    Cell::from(format!("{}...", &stat.program_id[..8]))
+                    // Program ID (full or truncated based on toggle)
+                    Cell::from(program_display)
                         .style(Style::default().fg(self.theme.gray)),
 
                     // TPS (color coded: green=low, amber=medium, red=high)
@@ -290,15 +327,15 @@ impl App {
             })
             .collect();
 
-        // Table with border matching theme - adjusted column widths for 6 columns
+        // Table with border matching theme - adjusted column widths for full IDs
         let table = Table::new(rows, vec![
-            Constraint::Percentage(25),  // Program ID
-            Constraint::Percentage(12),  // Txs/s
-            Constraint::Percentage(13),  // CU/s
-            Constraint::Percentage(13),  // Avg CU
-            Constraint::Percentage(12),  // Total
-            Constraint::Percentage(13),  // Success%
-            Constraint::Percentage(12),  // Padding to reach 100%
+            Constraint::Percentage(35),  // Program ID (expanded for full IDs)
+            Constraint::Percentage(11),  // Txs/s
+            Constraint::Percentage(11),  // CU/s
+            Constraint::Percentage(11),  // Avg CU
+            Constraint::Percentage(11),  // Total
+            Constraint::Percentage(11),  // Success%
+            Constraint::Percentage(10),  // Padding
         ])
         .header(header)
         .block(
@@ -312,22 +349,21 @@ impl App {
         frame.render_widget(table, area);
     }
 
-    /// Render the footer with function key hints
+    /// Render the footer with keyboard shortcuts
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        // htop-style function key hints
+        // htop-style keyboard shortcuts
         let footer_text = vec![
-            ("F1", "Help"),
-            ("F2", "Setup"),
-            ("F5", "Sort"),
-            ("F9", "Filter"),
-            ("F10", "Quit"),
+            ("t", "Toggle IDs"),
+            ("u", "Filter System"),
+            ("w", "Window View"),
+            ("q", "Quit"),
         ];
 
         let spans: Vec<Span> = footer_text
             .iter()
             .flat_map(|(key, label)| {
                 vec![
-                    Span::styled(*key, self.theme.success_style()),  // Green F-key
+                    Span::styled(*key, self.theme.success_style()),  // Green key
                     Span::raw(format!("{} ", label)),                // White label
                     Span::raw(" "),
                 ]
@@ -343,8 +379,23 @@ impl App {
     /// Handle keyboard input
     fn handle_key(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Char('q') | KeyCode::Esc => {
+            KeyCode::Char('q') | KeyCode::Esc | KeyCode::F(10) => {
                 self.running = false;
+            }
+            KeyCode::Char('t') => {
+                // Toggle ID truncation
+                self.truncate_ids = !self.truncate_ids;
+            }
+            KeyCode::Char('u') => {
+                // Toggle system program filter
+                self.hide_system_programs = !self.hide_system_programs;
+            }
+            KeyCode::Char('w') => {
+                // Toggle view mode
+                self.view_mode = match self.view_mode {
+                    ViewMode::Live => ViewMode::Window,
+                    ViewMode::Window => ViewMode::Live,
+                };
             }
             KeyCode::Down => {
                 // TODO: Move selection down (we'll implement this later)
@@ -362,6 +413,11 @@ impl App {
 
         let mut display = Vec::new();
         
+        // Note: ViewMode (Live vs Window) both read from the same ring buffer
+        // The difference is conceptual - Live shows "streaming" while Window shows "accumulated"
+        // Both calculate from the configured time window stored in the ring buffer
+        // Future enhancement: could adjust time ranges or aggregation methods per mode
+        
         // Aggregate network-wide statistics
         let mut total_tps = 0.0;
         let mut total_txs = 0u64;
@@ -369,6 +425,11 @@ impl App {
         let mut total_cu_per_sec = 0.0;
 
         for (program_id, stats) in state.programs.iter() {
+            // Skip system programs if filter is enabled
+            if self.hide_system_programs && is_system_program(program_id) {
+                continue;
+            }
+            
             let tx_per_sec = stats.transactions_per_second();
             let total_program_txs = stats.total_transactions();
             let success_rate = stats.success_rate();
