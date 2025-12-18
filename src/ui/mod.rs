@@ -4,5 +4,7 @@
 //! in an interactive terminal dashboard.
 
 mod app;
+mod theme;
 
 pub use app::App;
+pub use theme::Theme;
