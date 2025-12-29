@@ -1,26 +1,25 @@
-use std::sync::Arc;
-use std::cmp::Reverse;
-use std::time::Duration;
+use super::Theme;
+use crate::stats::{is_system_program, NetworkState};
 use anyhow::Result;
-use tokio::sync::RwLock;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     backend::Backend,
-    Terminal,
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Row, Table, Cell, Paragraph},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    Frame, Terminal,
 };
-use crate::stats::{NetworkState, is_system_program};
-use super::Theme;
+use std::cmp::Reverse;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
 
 /// View mode for displaying statistics
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
-    Live,       // Current behavior - shows recent activity
-    Window,     // Shows aggregate stats for entire window
+    Live,   // Current behavior - shows recent activity
+    Window, // Shows aggregate stats for entire window
 }
 
 /// Main TUI application
@@ -35,21 +34,21 @@ pub struct App {
     pub selected_row: usize,
 
     cached_stats: Vec<ProgramStatsDisplay>,
-    
+
     cached_network_stats: NetworkStatsDisplay,
 
     /// Theme configuration
     theme: Theme,
-    
+
     /// Whether to truncate program IDs (toggle with 't')
     truncate_ids: bool,
-    
+
     /// Whether to hide system programs (toggle with 'u')
     hide_system_programs: bool,
-    
+
     /// Current view mode (toggle with 'w')
     view_mode: ViewMode,
-    
+
     /// Loading state - true until first data arrives
     loading: bool,
 }
@@ -86,13 +85,13 @@ impl App {
         let (program_stats, network_stats) = self.get_stats().await;
         self.cached_stats = program_stats;
         self.cached_network_stats = network_stats;
-        
+
         // Exit loading state once we have data
         if self.cached_network_stats.current_slot > 0 {
             self.loading = false;
         }
     }
-    
+
     /// Get cached stats for rendering
     fn get_cached_stats(&self) -> &[ProgramStatsDisplay] {
         &self.cached_stats
@@ -103,7 +102,7 @@ impl App {
         // Tick rate: how often we update the UI
         let tick_rate = Duration::from_millis(500);
         let mut last_tick = tokio::time::Instant::now();
-        
+
         loop {
             self.update_stats().await;
 
@@ -111,32 +110,32 @@ impl App {
             terminal.draw(|frame| {
                 self.render(frame);
             })?;
-            
+
             // 2. Handle events with timeout
             let timeout = tick_rate
                 .checked_sub(last_tick.elapsed())
                 .unwrap_or_else(|| Duration::from_secs(0));
-            
+
             if event::poll(timeout)? {
                 if let Event::Key(key) = event::read()? {
                     // Handle keyboard input
                     self.handle_key(key.code);
                 }
             }
-            
+
             // 3. Tick if enough time has elapsed
             if last_tick.elapsed() >= tick_rate {
                 // This is where we'd update app state
                 // (Currently no-op since data updates happen in background)
                 last_tick = tokio::time::Instant::now();
             }
-            
+
             // 4. Check exit condition
             if !self.running {
                 break;
             }
         }
-        
+
         Ok(())
     }
 
@@ -154,10 +153,10 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),      // Header (normal size)
-                Constraint::Length(3),      // Network Overview
-                Constraint::Min(10),        // Table (takes remaining space)
-                Constraint::Length(1),      // Footer
+                Constraint::Length(5), // Header (normal size)
+                Constraint::Length(3), // Network Overview
+                Constraint::Min(10),   // Table (takes remaining space)
+                Constraint::Length(1), // Footer
             ])
             .split(area);
 
@@ -174,18 +173,18 @@ impl App {
         let vertical_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(30),  // Top spacer
-                Constraint::Length(15),      // Logo + text
-                Constraint::Percentage(30),  // Bottom spacer
+                Constraint::Percentage(30), // Top spacer
+                Constraint::Length(15),     // Logo + text
+                Constraint::Percentage(30), // Bottom spacer
             ])
             .split(area);
 
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(25),  // Left spacer
-                Constraint::Percentage(50),  // Logo area
-                Constraint::Percentage(25),  // Right spacer
+                Constraint::Percentage(25), // Left spacer
+                Constraint::Percentage(50), // Logo area
+                Constraint::Percentage(25), // Right spacer
             ])
             .split(vertical_chunks[1]);
 
@@ -207,9 +206,9 @@ impl App {
             "",
             "              Loading Solana network data...",
         ];
-        
+
         let logo_text = Paragraph::new(logo.join("\n"))
-            .style(self.theme.normal_style())  // White instead of green
+            .style(self.theme.normal_style()) // White instead of green
             .alignment(Alignment::Center);
         frame.render_widget(logo_text, content_area);
     }
@@ -217,7 +216,7 @@ impl App {
     /// Render the header section
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let stats = &self.cached_network_stats;
-        
+
         // Create header with neon green border
         let header_block = Block::default()
             .title(" soltop - Solana Table of Programs ")
@@ -232,15 +231,15 @@ impl App {
         let info_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),  // Line 1: Slot
-                Constraint::Length(1),  // Line 2: Stats with mode indicators
-                Constraint::Length(1),  // Line 3: Spacer
+                Constraint::Length(1), // Line 1: Slot
+                Constraint::Length(1), // Line 2: Stats with mode indicators
+                Constraint::Length(1), // Line 3: Spacer
             ])
             .split(inner);
 
         // Line 1: Current slot with network lag
         let lag = stats.latest_network_slot.saturating_sub(stats.current_slot);
-        
+
         let slot_text = Paragraph::new(format!(
             "Slot: {} │ Network: {} ({} behind)",
             format_large_number(stats.current_slot),
@@ -256,7 +255,7 @@ impl App {
             format!("Window: {}", format_duration(stats.window_duration)),
             format!("Programs: {}", stats.program_count),
         ];
-        
+
         // Add mode indicators
         let mut indicators = Vec::new();
         if self.truncate_ids {
@@ -268,20 +267,19 @@ impl App {
         if self.view_mode == ViewMode::Window {
             indicators.push("[WINDOW VIEW]");
         }
-        
+
         if !indicators.is_empty() {
             status_parts.push(indicators.join(" "));
         }
-        
-        let stats_text = Paragraph::new(status_parts.join(" │ "))
-            .style(self.theme.muted_style());
+
+        let stats_text = Paragraph::new(status_parts.join(" │ ")).style(self.theme.muted_style());
         frame.render_widget(stats_text, info_chunks[1]);
     }
 
     /// Render the network overview panel
     fn render_network_overview(&self, frame: &mut Frame, area: Rect) {
         let stats = &self.cached_network_stats;
-        
+
         let overview_block = Block::default()
             .title(" Network Overview ")
             .borders(Borders::ALL)
@@ -296,31 +294,30 @@ impl App {
             Span::styled("Total TPS: ", self.theme.muted_style()),
             Span::styled(
                 format!("{:.1}", stats.total_tps),
-                Style::default().fg(self.theme.tps_color(stats.total_tps))
+                Style::default().fg(self.theme.tps_color(stats.total_tps)),
             ),
             Span::raw("  │  "),
             Span::styled("Total Txs: ", self.theme.muted_style()),
             Span::styled(
                 format_large_number(stats.total_txs),
-                self.theme.normal_style()
+                self.theme.normal_style(),
             ),
             Span::raw("  │  "),
             Span::styled("Avg Success: ", self.theme.muted_style()),
             Span::styled(
                 format!("{:.1}%", stats.avg_success_rate),
-                Style::default().fg(self.theme.success_rate_color(stats.avg_success_rate))
+                Style::default().fg(self.theme.success_rate_color(stats.avg_success_rate)),
             ),
             Span::raw("  │  "),
             Span::styled("Total CU/s: ", self.theme.muted_style()),
             Span::styled(
                 format_cu(stats.total_cu_per_sec),
-                Style::default().fg(self.theme.cu_per_sec_color(stats.total_cu_per_sec))
+                Style::default().fg(self.theme.cu_per_sec_color(stats.total_cu_per_sec)),
             ),
         ];
 
-        let overview_text = Paragraph::new(Line::from(spans))
-            .alignment(Alignment::Center);
-        
+        let overview_text = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
+
         frame.render_widget(overview_text, inner);
     }
 
@@ -360,33 +357,21 @@ impl App {
 
                 Row::new(vec![
                     // Program ID (full or truncated based on toggle)
-                    Cell::from(program_display)
-                        .style(Style::default().fg(self.theme.gray)),
-
+                    Cell::from(program_display).style(Style::default().fg(self.theme.gray)),
                     // TPS (color coded: green=low, amber=medium, red=high)
                     Cell::from(format!("{:.1}", stat.tx_per_sec))
                         .style(Style::default().fg(tps_color)),
-
                     // CU/s (color coded based on compute intensity)
                     Cell::from(format_cu(stat.cu_per_sec))
                         .style(Style::default().fg(cu_per_sec_color)),
-
                     // Avg CU (color coded based on efficiency)
-                    Cell::from(format_cu(stat.avg_cu))
-                        .style(Style::default().fg(avg_cu_color)),
-
+                    Cell::from(format_cu(stat.avg_cu)).style(Style::default().fg(avg_cu_color)),
                     // Min CU
-                    Cell::from(format_cu(stat.min_cu as f64))
-                        .style(self.theme.normal_style()),
-
+                    Cell::from(format_cu(stat.min_cu as f64)).style(self.theme.normal_style()),
                     // Max CU
-                    Cell::from(format_cu(stat.max_cu as f64))
-                        .style(self.theme.normal_style()),
-
+                    Cell::from(format_cu(stat.max_cu as f64)).style(self.theme.normal_style()),
                     // Total (normal white)
-                    Cell::from(format!("{}", stat.total_txs))
-                        .style(self.theme.normal_style()),
-
+                    Cell::from(format!("{}", stat.total_txs)).style(self.theme.normal_style()),
                     // Success% (color coded: green>95%, amber>80%, red<80%)
                     Cell::from(format!("{:.1}%", stat.success_rate))
                         .style(Style::default().fg(success_color)),
@@ -395,24 +380,27 @@ impl App {
             .collect();
 
         // Table with border matching theme - adjusted column widths for full IDs
-        let table = Table::new(rows, vec![
-            Constraint::Percentage(30),  // Program ID
-            Constraint::Percentage(8),   // Txs/s
-            Constraint::Percentage(9),   // CU/s
-            Constraint::Percentage(9),   // Avg CU
-            Constraint::Percentage(9),   // Min CU
-            Constraint::Percentage(9),   // Max CU
-            Constraint::Percentage(8),   // Total
-            Constraint::Percentage(8),   // Success%
-            Constraint::Percentage(10),  // Padding
-        ])
+        let table = Table::new(
+            rows,
+            vec![
+                Constraint::Percentage(30), // Program ID
+                Constraint::Percentage(8),  // Txs/s
+                Constraint::Percentage(9),  // CU/s
+                Constraint::Percentage(9),  // Avg CU
+                Constraint::Percentage(9),  // Min CU
+                Constraint::Percentage(9),  // Max CU
+                Constraint::Percentage(8),  // Total
+                Constraint::Percentage(8),  // Success%
+                Constraint::Percentage(10), // Padding
+            ],
+        )
         .header(header)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(self.theme.border_style())
                 .title(" Program Statistics ")
-                .title_style(self.theme.header_style())
+                .title_style(self.theme.header_style()),
         );
 
         frame.render_widget(table, area);
@@ -432,15 +420,15 @@ impl App {
             .iter()
             .flat_map(|(key, label)| {
                 vec![
-                    Span::styled(*key, self.theme.success_style()),  // Green key
-                    Span::raw(format!("{} ", label)),                // White label
+                    Span::styled(*key, self.theme.success_style()), // Green key
+                    Span::raw(format!("{} ", label)),               // White label
                     Span::raw(" "),
                 ]
             })
             .collect();
 
-        let footer = Paragraph::new(Line::from(spans))
-            .style(Style::default().bg(self.theme.background));
+        let footer =
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(self.theme.background));
 
         frame.render_widget(footer, area);
     }
@@ -481,12 +469,12 @@ impl App {
         let state = self.network_state.read().await;
 
         let mut display = Vec::new();
-        
+
         // Note: ViewMode (Live vs Window) both read from the same ring buffer
         // The difference is conceptual - Live shows "streaming" while Window shows "accumulated"
         // Both calculate from the configured time window stored in the ring buffer
         // Future enhancement: could adjust time ranges or aggregation methods per mode
-        
+
         // Aggregate network-wide statistics
         let mut total_tps = 0.0;
         let mut total_txs = 0u64;
@@ -498,7 +486,7 @@ impl App {
             if self.hide_system_programs && is_system_program(program_id) {
                 continue;
             }
-            
+
             let tx_per_sec = stats.transactions_per_second();
             let total_program_txs = stats.total_transactions();
             let success_rate = stats.success_rate();
@@ -513,29 +501,28 @@ impl App {
             total_success_txs += ((success_rate / 100.0) * total_program_txs as f64) as u64;
             total_cu_per_sec += cu_per_sec;
 
-            display.push(
-                ProgramStatsDisplay {
-                    program_id: program_id.clone(),
-                    tx_per_sec,
-                    total_txs: total_program_txs,
-                    success_rate,
-                    cu_per_sec,
-                    avg_cu,
-                    min_cu,
-                    max_cu,
+            display.push(ProgramStatsDisplay {
+                program_id: program_id.clone(),
+                tx_per_sec,
+                total_txs: total_program_txs,
+                success_rate,
+                cu_per_sec,
+                avg_cu,
+                min_cu,
+                max_cu,
             });
         }
-        
+
         // Sort by total_txs descending
         display.sort_by_key(|s| Reverse(s.total_txs));
-        
+
         // Calculate average success rate (weighted)
         let avg_success_rate = if total_txs > 0 {
             (total_success_txs as f64 / total_txs as f64) * 100.0
         } else {
             0.0
         };
-        
+
         let network_stats = NetworkStatsDisplay {
             current_slot: state.current_slot,
             latest_network_slot: state.latest_network_slot,
@@ -547,7 +534,7 @@ impl App {
             avg_success_rate,
             total_cu_per_sec,
         };
-        
+
         (display, network_stats)
     }
 }
@@ -586,14 +573,14 @@ fn format_large_number(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::new();
     let chars: Vec<char> = s.chars().collect();
-    
+
     for (i, c) in chars.iter().enumerate() {
         if i > 0 && (chars.len() - i) % 3 == 0 {
             result.push(',');
         }
         result.push(*c);
     }
-    
+
     result
 }
 
@@ -613,7 +600,7 @@ fn format_cu(n: f64) -> String {
 /// Format duration in human-readable form (e.g., "2m 34s", "1h 23m")
 fn format_duration(d: Duration) -> String {
     let total_secs = d.as_secs();
-    
+
     if total_secs >= 3600 {
         let hours = total_secs / 3600;
         let minutes = (total_secs % 3600) / 60;

@@ -3,9 +3,9 @@
 //! This module provides functionality to fetch slots and blocks from any Solana RPC endpoint.
 
 mod client;
-mod types;
 mod parser;
+mod types;
 
 pub use client::RpcClient;
-pub use types::{SlotResponse, BlockData, TransactionData, LogMessage};
 pub use parser::{extract_program_cu, extract_program_cu_timed};
+pub use types::{BlockData, LogMessage, SlotResponse, TransactionData};

@@ -1,18 +1,15 @@
 use anyhow::Result;
+use clap::Parser;
 use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
-use std::time::Duration;
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use clap::Parser;
+use std::time::Duration;
 
-use soltop::{NetworkMonitor, MonitorConfig};
 use soltop::ui::App;
+use soltop::{MonitorConfig, NetworkMonitor};
 
 #[derive(Parser, Debug)]
 #[command(name = "soltop")]
@@ -21,7 +18,7 @@ struct Args {
     /// Enable verbose performance statistics
     #[arg(short, long)]
     verbose: bool,
-    
+
     /// RPC endpoint URL
     #[arg(
         long,
@@ -43,17 +40,17 @@ async fn main() -> Result<()> {
     // Create configuration
     let config = MonitorConfig {
         rpc_url: args.rpc_url,
-        window_duration: Duration::from_secs(5 * 60),  // 5 minutes
+        window_duration: Duration::from_secs(5 * 60), // 5 minutes
         buffer_capacity: 750,
         poll_interval: Duration::from_millis(400),
     };
-    
+
     // Create monitor
     let monitor = NetworkMonitor::new(config);
-    
+
     // Get shared state reference for UI
     let network_state = monitor.get_state();
-    
+
     // Spawn monitoring task in background
     tokio::spawn(async move {
         if let Err(e) = monitor.start().await {

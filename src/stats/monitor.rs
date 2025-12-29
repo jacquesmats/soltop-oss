@@ -1,26 +1,26 @@
+use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
-use anyhow::Result;
 
-use crate::rpc::RpcClient;
 use super::network::NetworkState;
+use crate::rpc::RpcClient;
 
 /// Configuration for the network monitor
 pub struct MonitorConfig {
     pub rpc_url: String,
     pub window_duration: Duration,
     pub buffer_capacity: usize,
-    pub poll_interval: Duration,  // How often to fetch new slots
+    pub poll_interval: Duration, // How often to fetch new slots
 }
 
 impl Default for MonitorConfig {
     fn default() -> Self {
         Self {
             rpc_url: "https://api.mainnet-beta.solana.com".to_string(),
-            window_duration: Duration::from_secs(5 * 60),  // 5 minutes
-            buffer_capacity: 750,  // ~5 minutes at 400ms/slot
-            poll_interval: Duration::from_millis(400),      // Match slot time
+            window_duration: Duration::from_secs(5 * 60), // 5 minutes
+            buffer_capacity: 750,                         // ~5 minutes at 400ms/slot
+            poll_interval: Duration::from_millis(400),    // Match slot time
         }
     }
 }
@@ -34,19 +34,14 @@ pub struct NetworkMonitor {
 impl NetworkMonitor {
     /// Create a new network monitor
     pub fn new(config: MonitorConfig) -> Self {
-        let state = Arc::new(RwLock::new(
-            NetworkState::new(
-                config.window_duration,
-                config.buffer_capacity,
-            )
-        ));
+        let state = Arc::new(RwLock::new(NetworkState::new(
+            config.window_duration,
+            config.buffer_capacity,
+        )));
 
-        Self {
-            config,
-            state,
-        }
+        Self { config, state }
     }
-    
+
     /// Get a clone of the shared state (for consumers to access)
     pub fn get_state(&self) -> Arc<RwLock<NetworkState>> {
         Arc::clone(&self.state)
@@ -60,17 +55,17 @@ impl NetworkMonitor {
         state: Arc<RwLock<NetworkState>>,
     ) -> Result<()> {
         let mut current_slot = rpc_client.get_latest_slot().await?;
-        
+
         loop {
             // Check where we are
             let latest_slot = rpc_client.get_latest_slot().await?;
-            
+
             // Update the latest network slot in state for UI display
             {
                 let mut state = state.write().await;
                 state.update_latest_network_slot(latest_slot);
             }
-            
+
             if current_slot <= latest_slot {
                 // Send slot immediately
                 tx.send(current_slot).await?;
@@ -94,11 +89,12 @@ impl NetworkMonitor {
                 Ok(Some(block_response)) if block_response.result.is_some() => {
                     // Happy path: block exists and has data
                     let block_data = block_response.result.unwrap();
-                    
-                    {  // Explicit scope for lock
+
+                    {
+                        // Explicit scope for lock
                         let mut state = state.write().await;
                         state.process_block(slot, &block_data, false);
-                    }  // Lock dropped here
+                    } // Lock dropped here
                 }
                 Ok(_) => {
                     // Block skipped or no data
@@ -109,7 +105,7 @@ impl NetworkMonitor {
                 }
             }
         }
-        
+
         println!("Consumer shutting down (channel closed)");
         Ok(())
     }
@@ -118,30 +114,32 @@ impl NetworkMonitor {
     /// This function runs forever (until Ctrl+C)
     pub async fn start(&self) -> Result<()> {
         let (tx, rx) = mpsc::channel::<u64>(100);
-        
+
         // Clone data for consumer
         let consumer_state = Arc::clone(&self.state);
         let rpc_client = RpcClient::new(self.config.rpc_url.clone());
-        
+
         // Clone data for producer
         let producer_client = RpcClient::new(self.config.rpc_url.clone());
         let producer_state = Arc::clone(&self.state);
         let poll_interval = self.config.poll_interval;
-        
+
         // Spawn producer
         let producer = tokio::spawn(async move {
-            if let Err(e) = Self::produce_slots(producer_client, poll_interval, tx, producer_state).await {
+            if let Err(e) =
+                Self::produce_slots(producer_client, poll_interval, tx, producer_state).await
+            {
                 eprintln!("Producer error: {}", e);
             }
         });
-        
+
         // Spawn consumer
         let consumer = tokio::spawn(async move {
             if let Err(e) = Self::consume_slots(consumer_state, rpc_client, rx).await {
                 eprintln!("Consumer error: {}", e);
             }
         });
-        
+
         let _ = tokio::join!(producer, consumer);
         Ok(())
     }

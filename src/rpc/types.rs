@@ -21,7 +21,7 @@ pub struct TransactionData {
 /// Transaction metadata (includes logs and status)
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionMeta {
-    pub err: Option<serde_json::Value>,  // null if success, error details if failed
+    pub err: Option<serde_json::Value>, // null if success, error details if failed
     #[serde(rename = "logMessages", default)]
     pub log_messages: Option<Vec<String>>,
 }

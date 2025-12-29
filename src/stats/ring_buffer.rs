@@ -1,5 +1,5 @@
 /// A fixed-size circular buffer that overwrites old data when full.
-/// 
+///
 /// Generic over type T - can store any data (numbers, structs, etc.)
 pub struct RingBuffer<T> {
     data: Vec<T>,
@@ -22,12 +22,12 @@ impl<T> RingBuffer<T> {
 
     /// If full, overwrites the oldest item.
     pub fn push(&mut self, item: T) {
-        if self.count < self.capacity{
+        if self.count < self.capacity {
             self.data.push(item);
             self.count += 1;
         } else if self.head < self.capacity {
             self.data[self.head] = item;
-        } 
+        }
         // Move head forward, wrap around
         self.head = (self.head + 1) % self.capacity;
     }
@@ -36,12 +36,13 @@ impl<T> RingBuffer<T> {
     /// Oldest items first, newest items last.
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         if self.is_full() {
-            self.data[self.head..].iter().chain(self.data[..self.head].iter())
+            self.data[self.head..]
+                .iter()
+                .chain(self.data[..self.head].iter())
         } else {
             self.data[0..self.count].iter().chain([].iter())
         }
     }
-
 
     /// Returns the current number of items in the buffer.
     pub fn len(&self) -> usize {
@@ -70,7 +71,6 @@ impl<T> RingBuffer<T> {
         self.count = 0;
         self.head = 0;
     }
-
 }
 
 #[cfg(test)]
@@ -99,7 +99,6 @@ mod tests {
         assert!(!buffer.is_empty());
         assert!(buffer.is_full());
         assert_eq!(buffer.len(), 3);
-
     }
 
     #[test]
@@ -151,9 +150,9 @@ mod tests {
         let mut buffer = RingBuffer::new(3);
         buffer.push(1);
         buffer.push(2);
-        
+
         buffer.clear();
-        
+
         assert_eq!(buffer.len(), 0);
         assert!(buffer.is_empty());
         // TODO: Test clear() resets buffer
