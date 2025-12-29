@@ -5,13 +5,10 @@ use super::RingBuffer;
 pub struct ProgramStats {
     /// The program's public key (e.g., "JUP4Fb2c...")
     pub program_id: String,
-    
+
     /// Ring buffer of slot-level statistics
     /// Each entry = aggregated stats for ONE SLOT
     slot_timeline: RingBuffer<SlotStats>,
-    
-    /// When we started collecting data for this program
-    start_time: Instant,
 }
 
 /// Statistics for a single slot
@@ -46,7 +43,6 @@ impl ProgramStats {
         Self {
             program_id,
             slot_timeline: RingBuffer::new(capacity),
-            start_time: Instant::now(),
         }
     }
     

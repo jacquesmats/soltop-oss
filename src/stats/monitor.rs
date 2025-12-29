@@ -28,25 +28,21 @@ impl Default for MonitorConfig {
 /// Main network monitoring coordinator
 pub struct NetworkMonitor {
     config: MonitorConfig,
-    rpc_client: RpcClient,
     state: Arc<RwLock<NetworkState>>,
 }
 
 impl NetworkMonitor {
     /// Create a new network monitor
     pub fn new(config: MonitorConfig) -> Self {
-        let rpc_client = RpcClient::new(config.rpc_url.clone());
-        
         let state = Arc::new(RwLock::new(
             NetworkState::new(
                 config.window_duration,
                 config.buffer_capacity,
             )
         ));
-        
+
         Self {
             config,
-            rpc_client,
             state,
         }
     }

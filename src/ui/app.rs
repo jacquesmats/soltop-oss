@@ -336,6 +336,8 @@ impl App {
             Cell::from("Txs/s"),
             Cell::from("CU/s"),
             Cell::from("Avg CU"),
+            Cell::from("Min CU"),
+            Cell::from("Max CU"),
             Cell::from("Total"),
             Cell::from("Success%"),
         ])
@@ -377,6 +379,14 @@ impl App {
                     Cell::from(format_cu(stat.avg_cu))
                         .style(Style::default().fg(avg_cu_color)),
 
+                    // Min CU
+                    Cell::from(format_cu(stat.min_cu as f64))
+                        .style(self.theme.normal_style()),
+
+                    // Max CU
+                    Cell::from(format_cu(stat.max_cu as f64))
+                        .style(self.theme.normal_style()),
+
                     // Total (normal white)
                     Cell::from(format!("{}", stat.total_txs))
                         .style(self.theme.normal_style()),
@@ -390,12 +400,14 @@ impl App {
 
         // Table with border matching theme - adjusted column widths for full IDs
         let table = Table::new(rows, vec![
-            Constraint::Percentage(35),  // Program ID (expanded for full IDs)
-            Constraint::Percentage(11),  // Txs/s
-            Constraint::Percentage(11),  // CU/s
-            Constraint::Percentage(11),  // Avg CU
-            Constraint::Percentage(11),  // Total
-            Constraint::Percentage(11),  // Success%
+            Constraint::Percentage(30),  // Program ID
+            Constraint::Percentage(8),   // Txs/s
+            Constraint::Percentage(9),   // CU/s
+            Constraint::Percentage(9),   // Avg CU
+            Constraint::Percentage(9),   // Min CU
+            Constraint::Percentage(9),   // Max CU
+            Constraint::Percentage(8),   // Total
+            Constraint::Percentage(8),   // Success%
             Constraint::Percentage(10),  // Padding
         ])
         .header(header)
@@ -496,13 +508,15 @@ impl App {
             let success_rate = stats.success_rate();
             let cu_per_sec = stats.cu_per_second();
             let avg_cu = stats.avg_cu_per_transaction();
-            
+            let min_cu = stats.min_cu();
+            let max_cu = stats.max_cu();
+
             // Accumulate network totals
             total_tps += tx_per_sec;
             total_txs += total_program_txs as u64;
             total_success_txs += ((success_rate / 100.0) * total_program_txs as f64) as u64;
             total_cu_per_sec += cu_per_sec;
-            
+
             display.push(
                 ProgramStatsDisplay {
                     program_id: program_id.clone(),
@@ -511,8 +525,8 @@ impl App {
                     success_rate,
                     cu_per_sec,
                     avg_cu,
-                    min_cu: stats.min_cu(),
-                    max_cu: stats.max_cu(),
+                    min_cu,
+                    max_cu,
             });
         }
         
