@@ -134,7 +134,7 @@ impl NetworkState {
         // Now convert accumulated data to SlotStats and record
         let timestamp = Instant::now();
         for (program_id, acc) in slot_data {
-            let slot_stats = acc.to_slot_stats(timestamp);
+            let slot_stats = acc.into_slot_stats(timestamp);
             
             // Get or create ProgramStats and record this slot
             self.programs
@@ -215,7 +215,7 @@ impl SlotAccumulator {
         }
     }
     
-    fn to_slot_stats(self, timestamp: Instant) -> SlotStats {
+    fn into_slot_stats(self, timestamp: Instant) -> SlotStats {
         // Handle empty case for avg
         let avg_cu = if self.tx_count > 0 {
             self.total_cu as f64 / self.tx_count as f64
@@ -231,9 +231,9 @@ impl SlotAccumulator {
             total_cu: self.total_cu,
             tx_count: self.tx_count,
             success_count: self.success_count,
-            avg_cu: avg_cu,
-            min_cu: min_cu, 
-            max_cu: max_cu,
+            avg_cu,
+            min_cu,
+            max_cu,
         }
     }
 }

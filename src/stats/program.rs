@@ -72,7 +72,7 @@ impl ProgramStats {
     /// Calculate transactions per second
     pub fn transactions_per_second(&self) -> f64 {
         if self.slot_timeline.is_empty() {
-            return 0.0;
+            0.0
         } else {
             let time_span = self.get_time_span();
             let total_txs = self.total_transactions();

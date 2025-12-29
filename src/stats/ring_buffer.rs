@@ -129,7 +129,7 @@ mod tests {
 
         let iter: Vec<_> = buffer.iter().collect();
         assert_eq!(iter, vec![&1, &2, &3]);
-        assert_eq!(iter.is_empty(), false);
+        assert!(!iter.is_empty());
     }
 
     #[test]

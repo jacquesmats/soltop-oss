@@ -239,11 +239,7 @@ impl App {
             .split(inner);
 
         // Line 1: Current slot with network lag
-        let lag = if stats.latest_network_slot > stats.current_slot {
-            stats.latest_network_slot - stats.current_slot
-        } else {
-            0
-        };
+        let lag = stats.latest_network_slot.saturating_sub(stats.current_slot);
         
         let slot_text = Paragraph::new(format!(
             "Slot: {} │ Network: {} ({} behind)",
@@ -425,7 +421,7 @@ impl App {
     /// Render the footer with keyboard shortcuts
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         // htop-style keyboard shortcuts
-        let footer_text = vec![
+        let footer_text = [
             ("t", "Toggle IDs"),
             ("u", "Filter System"),
             ("w", "Window View"),
