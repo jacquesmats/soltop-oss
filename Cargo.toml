@@ -1,7 +1,15 @@
 [package]
 name = "soltop"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+authors = ["Matheus Jacques <matheus.jacques@live.com"]
+description = "Terminal UI for monitoring Solana program performance in real-time"
+license = "MIT"
+repository = "https://github.com/jacquesmats/soltop-oss"
+keywords = ["solana", "monitoring", "tui", "blockchain", "terminal"]
+categories = ["command-line-utilities", "visualization"]
+readme = "README.md"
+rust-version = "1.75"
 
 [dependencies]
 anyhow = "1.0.100"
