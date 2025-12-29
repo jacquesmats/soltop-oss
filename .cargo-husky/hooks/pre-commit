@@ -1,0 +1,32 @@
+#!/bin/sh
+
+# Pre-commit hook for soltop
+# Runs formatting, linting, and tests before allowing commit
+
+echo "Running pre-commit checks..."
+
+# Format code
+echo "→ Running cargo fmt..."
+cargo fmt -- --check
+if [ $? -ne 0 ]; then
+    echo "❌ Code formatting failed. Run 'cargo fmt' to fix."
+    exit 1
+fi
+
+# Run clippy
+echo "→ Running cargo clippy..."
+cargo clippy --all-targets --all-features -- -D warnings
+if [ $? -ne 0 ]; then
+    echo "❌ Clippy found issues. Fix them before committing."
+    exit 1
+fi
+
+# Run tests
+echo "→ Running cargo test..."
+cargo test --quiet
+if [ $? -ne 0 ]; then
+    echo "❌ Tests failed. Fix them before committing."
+    exit 1
+fi
+
+echo "✅ All pre-commit checks passed!"
